@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Kotaro San</title>
+    <style>
+        canvas { border: 1px solid black; background: #000; }
+        body { display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #111; }
+        #game-over { position: absolute; color: white; font-size: 48px; display: none; font-family: Arial; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="game-over">GAME OVER<br>Press R to Restart</div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameOverText = document.getElementById('game-over');
+
+        // Load assets
+        const heroImg = new Image(); heroImg.src = 'hero.jpg';
+        const enemyImg = new Image(); enemyImg.src = 'enemy.jpg';
+        const powerupImg = new Image(); powerupImg.src = 'powerup.jpg';
+        const shootSound = new Audio('catsound.wav');
+        const bgMusic = new Audio('game.mp3');
+        bgMusic.loop = true;
+        bgMusic.volume = 0.3;
+        bgMusic.play();
+
+        // Game state
+        let score = 0;
+        let gameOver = false;
+        let powerupLevel = 1;
+        let explosions = [];
+        let scorePopups = [];
+
+        // Player (faster movement)
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            size: 50,
+            angle: 0,
+            speedX: 0,
+            speedY: 0,
+            maxSpeed: 12,  // Increased from 8
+            baseMaxSpeed: 12,  // Increased from 8
+            acceleration: 0.25,  // Increased from 0.15
+            friction: 0.92,
+            speedBoost: 0
+        };
+
+        // Game objects
+        let bullets = [];
+        let enemies = [];
+        let powerups = [];
+
+        // Input handling
+        const keys = {};
+        document.addEventListener('keydown', e => keys[e.key] = true);
+        document.addEventListener('keyup', e => keys[e.key] = false);
+
+        function spawnEnemy() {
+            const side = Math.floor(Math.random() * 4);
+            let x, y;
+            switch(side) {
+                case 0: x = Math.random() * canvas.width; y = -50; break;
+                case 1: x = canvas.width + 50; y = Math.random() * canvas.height; break;
+                case 2: x = Math.random() * canvas.width; y = canvas.height + 50; break;
+                case 3: x = -50; y = Math.random() * canvas.height; break;
+            }
+            const type = Math.random() < 0.7 ? 'small' : 'large';
+            enemies.push({
+                x, y,
+                size: type === 'small' ? 20 : 60,
+                angle: Math.atan2(player.y - y, player.x - x),
+                speed: (type === 'small' ? 3 : 1) * (1 + score / 200),
+                value: 1,
+                type
+            });
+        }
+
+        function spawnPowerup() {
+            powerups.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: 30,
+                type: Math.random() < 0.5 ? 'bullet' : 'speed'
+            });
+        }
+
+        function fadeAudio(audio, duration) {
+            const step = audio.volume / (duration / 16);
+            const fade = setInterval(() => {
+                audio.volume = Math.max(0, audio.volume - step);
+                if (audio.volume <= 0) {
+                    audio.pause();
+                    clearInterval(fade);
+                }
+            }, 16);
+        }
+
+        function update() {
+            if (gameOver) {
+                if (keys['r']) location.reload();
+                return;
+            }
+
+            // Player movement
+            if (keys['ArrowLeft'] || keys['a']) player.angle -= 0.12;
+            if (keys['ArrowRight'] || keys['d']) player.angle += 0.12;
+            if (keys['ArrowUp'] || keys['w']) {
+                player.speedX += Math.cos(player.angle) * player.acceleration;
+                player.speedY += Math.sin(player.angle) * player.acceleration;
+            }
+            if (keys['ArrowDown'] || keys['s']) {
+                player.speedX -= Math.cos(player.angle) * player.acceleration * 0.5;
+                player.speedY -= Math.sin(player.angle) * player.acceleration * 0.5;
+            }
+
+            player.speedX *= player.friction;
+            player.speedY *= player.friction;
+            player.x += player.speedX;
+            player.y += player.speedY;
+
+            const speed = Math.hypot(player.speedX, player.speedY);
+            if (speed > player.maxSpeed) {
+                player.speedX = (player.speedX / speed) * player.maxSpeed;
+                player.speedY = (player.speedY / speed) * player.maxSpeed;
+            }
+
+            if (player.x < player.size / 2) {
+                player.x = player.size / 2;
+                player.speedX *= -0.5;
+            }
+            if (player.x > canvas.width - player.size / 2) {
+                player.x = canvas.width - player.size / 2;
+                player.speedX *= -0.5;
+            }
+            if (player.y < player.size / 2) {
+                player.y = player.size / 2;
+                player.speedY *= -0.5;
+            }
+            if (player.y > canvas.height - player.size / 2) {
+                player.y = canvas.height - player.size / 2;
+                player.speedY *= -0.5;
+            }
+
+            if (player.speedBoost > 0) {
+                player.speedBoost--;
+                if (player.speedBoost === 0) player.maxSpeed = player.baseMaxSpeed;
+            }
+
+            // Shooting
+            if (keys[' ']) {
+                if (!keys.lastShot || Date.now() - keys.lastShot > 200) {
+                    for (let i = 0; i < powerupLevel; i++) {
+                        bullets.push({
+                            x: player.x,
+                            y: player.y,
+                            angle: player.angle + (i - (powerupLevel-1)/2) * 0.2,
+                            speed: 10
+                        });
+                    }
+                    keys.lastShot = Date.now();
+                }
+            }
+
+            bullets = bullets.filter(b => {
+                b.x += Math.cos(b.angle) * b.speed;
+                b.y += Math.sin(b.angle) * b.speed;
+                return b.x > -10 && b.x < canvas.width + 10 && b.y > -10 && b.y < canvas.height + 10;
+            });
+
+            enemies.forEach(e => {
+                e.x += Math.cos(e.angle) * e.speed;
+                e.y += Math.sin(e.angle) * e.speed;
+            });
+
+            bullets.forEach((b, bi) => {
+                enemies.forEach((e, ei) => {
+                    if (Math.hypot(b.x - e.x, b.y - e.y) < e.size/2 + 5) {
+                        enemies.splice(ei, 1);
+                        bullets.splice(bi, 1);
+                        score += e.value;
+                        shootSound.play();
+                        explosions.push({ x: e.x, y: e.y, size: e.size/2, opacity: 1 });
+                        scorePopups.push({ x: e.x, y: e.y, opacity: 1, text: `+${e.value}` });
+                    }
+                });
+            });
+
+            enemies.forEach(e => {
+                if (Math.hypot(player.x - e.x, player.y - e.y) < player.size/2 + e.size/2) {
+                    gameOver = true;
+                    gameOverText.style.display = 'block';
+                    fadeAudio(bgMusic, 1000);
+                }
+            });
+
+            powerups = powerups.filter(p => {
+                if (Math.hypot(player.x - p.x, player.y - p.y) < player.size/2 + p.size/2) {
+                    if (p.type === 'bullet' && powerupLevel < 5) powerupLevel++;
+                    if (p.type === 'speed') {
+                        player.speedBoost = 300;
+                        player.maxSpeed = player.baseMaxSpeed * 2;
+                    }
+                    shootSound.play();
+                    return false;
+                }
+                return true;
+            });
+
+            const spawnRate = Math.min(0.02 + score / 200, 0.05);
+            if (Math.random() < spawnRate) spawnEnemy();
+            if (Math.random() < 0.005) spawnPowerup();
+
+            if (score >= 100) {
+                gameOver = true;
+                gameOverText.textContent = 'YOU WIN!\nPress R to Restart';
+                gameOverText.style.display = 'block';
+                fadeAudio(bgMusic, 1000);
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.save();
+            ctx.translate(player.x, player.y);
+            ctx.rotate(player.angle);  // Top of image is forward
+            if (keys['ArrowUp'] || keys['w']) {
+                ctx.fillStyle = 'orange';
+                ctx.beginPath();
+                ctx.moveTo(-player.size / 2 - 10, 0);
+                ctx.lineTo(-player.size / 2, -5);
+                ctx.lineTo(-player.size / 2, 5);
+                ctx.fill();
+            }
+            ctx.drawImage(heroImg, -player.size/2, -player.size/2, player.size, player.size);
+            ctx.restore();
+
+            ctx.fillStyle = 'white';
+            bullets.forEach(b => ctx.fillRect(b.x - 2, b.y - 2, 4, 4));
+
+            enemies.forEach(e => {
+                ctx.save();
+                ctx.translate(e.x, e.y);
+                ctx.rotate(e.angle);
+                ctx.drawImage(enemyImg, -e.size/2, -e.size/2, e.size, e.size);
+                ctx.restore();
+            });
+
+            powerups.forEach(p => ctx.drawImage(powerupImg, p.x - p.size/2, p.y - p.size/2, p.size, p.size));
+
+            explosions.forEach((e, i) => {
+                ctx.fillStyle = `rgba(255, 165, 0, ${e.opacity})`;
+                ctx.beginPath();
+                ctx.arc(e.x, e.y, e.size, 0, Math.PI * 2);
+                ctx.fill();
+                e.size += 1;
+                e.opacity -= 0.05;
+                if (e.opacity <= 0) explosions.splice(i, 1);
+            });
+
+            scorePopups.forEach((s, i) => {
+                ctx.fillStyle = `rgba(255, 255, 255, ${s.opacity})`;
+                ctx.fillText(s.text, s.x, s.y);
+                s.y -= 1;
+                s.opacity -= 0.03;
+                if (s.opacity <= 0) scorePopups.splice(i, 1);
+            });
+
+            ctx.fillStyle = 'white';
+            ctx.font = '20px Arial';
+            ctx.fillText(`Score: ${score}`, 10, 30);
+            ctx.fillText('Kotaro San', canvas.width/2 - 50, 30);
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+    </script>
+</body>
+</html>
