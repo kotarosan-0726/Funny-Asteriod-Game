@@ -50,4 +50,4 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 Crafted with a passion for retro arcade chaos and a big nod to the classic *Asteroids*. Built with HTML, JavaScript, and CSS for a fun, browser-based adventure. Thanks to the web dev community for endless inspiration!
 
 ## Play the Game
-Try it online: [Kotaro’s Platformer](https://kotarosan-0726.github.io/kotaro-san)
+Try it online: [Kotaro’s Platformer](https://kotarosan-0726.github.io/Funny-Asteriod-Game/)
